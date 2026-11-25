@@ -281,6 +281,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            white-space: nowrap;
         }
 
         /* Loading Screen Overlay */
@@ -433,7 +434,7 @@
 
     <!-- Guia Rápido -->
     <div id="hint-box">
-        💡 Clique na carne crua da bandeja para grelhar (3s). Monte o hambúrguer no prato central!
+        💡 Desktop: WASD/Setas para andar, arraste no fundo para olhar | VR: Analógico Esq. anda, Dir. gira e Gatilho interage
     </div>
 
     <!-- Modal de Registro de Jogador -->
@@ -534,7 +535,6 @@
         import * as THREE from 'three';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
         import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
         // ==========================================
@@ -568,9 +568,17 @@
 
         // Deslocamento da bancada e coordenadas centrais das estações
         const COUNTER_SHIFT_Z = -1.35;
-        const COOK_STATION_X = -0.45;
+        const COOK_STATION_X = -0.35;
         const COOK_STATION_Z = -0.62 + COUNTER_SHIFT_Z;
-        const PLATE_CENTER = new THREE.Vector3(0.85, 0.9250, -0.64 + COUNTER_SHIFT_Z);
+        const PLATE_CENTER = new THREE.Vector3(0.55, 0.9250, -0.58 + COUNTER_SHIFT_Z);
+
+        // Caixa de colisão da bancada para impedir o jogador de entrar dentro dela
+        const COUNTER_COLLIDER = {
+            minX: -2.05,
+            maxX: 4.45,
+            minZ: BACK_WALL_Z,
+            maxZ: -0.23 + COUNTER_SHIFT_Z + 0.38 // -1.20
+        };
 
         // ==========================================
         // DADOS DO JOGADOR / SESSÃO DA BASE DE DADOS
@@ -583,11 +591,16 @@
         window.keysPressed = keysPressed;
 
         window.addEventListener('keydown', (e) => {
+            if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
             keysPressed[e.key.toLowerCase()] = true;
         });
 
         window.addEventListener('keyup', (e) => {
             keysPressed[e.key.toLowerCase()] = false;
+        });
+
+        window.addEventListener('blur', () => {
+            Object.keys(keysPressed).forEach(k => keysPressed[k] = false);
         });
 
         // ==========================================
@@ -926,18 +939,35 @@
         }
 
         // ==========================================
-        // 3. CENA, CÂMERA E RENDERER
+        // 3. CENA, CÂMERA POV E RENDERER
         // ==========================================
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xF0F4F8);
 
+        // Rig do jogador (posição no chão da cozinha + rotação no eixo Y)
         const cameraGroup = new THREE.Group();
-        cameraGroup.position.set(0.65, 0.0, COUNTER_SHIFT_Z);
+        cameraGroup.position.set(0.55, 0.0, 0.95 + COUNTER_SHIFT_Z);
         scene.add(cameraGroup);
 
-        const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 30);
-        camera.position.set(0.0, 1.56, 0.95);
+        // Câmera POV (altura dos olhos no modo desktop; no VR o headset controla a altura e inclinação)
+        const DESKTOP_EYE_HEIGHT = 1.56;
+        const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 30);
+        camera.position.set(0.0, DESKTOP_EYE_HEIGHT, 0.0);
+        camera.rotation.order = 'YXZ';
         cameraGroup.add(camera);
+
+        // Ângulos do POV no Desktop (Yaw horizontal no cameraGroup, Pitch vertical na câmera)
+        const povLook = {
+            yaw: 0.0,
+            pitch: -0.22,
+            targetYaw: 0.0,
+            targetPitch: -0.22,
+            isLooking: false,
+            lastX: 0,
+            lastY: 0
+        };
+        cameraGroup.rotation.y = povLook.yaw;
+        camera.rotation.x = povLook.pitch;
 
         const audioListener = new THREE.AudioListener();
         camera.add(audioListener);
@@ -955,16 +985,18 @@
 
         document.body.appendChild(VRButton.createButton(renderer));
 
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.target.set(0.65, 1.42, -0.64 + COUNTER_SHIFT_Z);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.enablePan = false;
-        controls.minDistance = 0.3;
-        controls.maxDistance = 3.0;
-        controls.minPolarAngle = 0.01;
-        controls.maxPolarAngle = Math.PI - 0.1;
-        controls.update();
+        // Ajuste automático entre modo Desktop POV e modo Headset VR
+        renderer.xr.addEventListener('sessionstart', () => {
+            camera.position.set(0, 0, 0);
+            camera.rotation.set(0, 0, 0);
+        });
+
+        renderer.xr.addEventListener('sessionend', () => {
+            camera.position.set(0, DESKTOP_EYE_HEIGHT, 0);
+            camera.rotation.order = 'YXZ';
+            camera.rotation.set(povLook.pitch, 0, 0);
+            cameraGroup.rotation.y = povLook.yaw;
+        });
 
         // TELETRANSPORTE VR
         const teleportRaycaster = new THREE.Raycaster();
@@ -994,7 +1026,7 @@
 
         const mainSun = new THREE.DirectionalLight(0xFFFAED, 1.6);
         mainSun.position.set(2.5, 6.0, 3.0 + COUNTER_SHIFT_Z);
-        mainSun.target.position.set(0.85, 0.9, -0.64 + COUNTER_SHIFT_Z);
+        mainSun.target.position.set(0.55, 0.9, -0.64 + COUNTER_SHIFT_Z);
         mainSun.castShadow = true;
         mainSun.shadow.mapSize.width = 2048;
         mainSun.shadow.mapSize.height = 2048;
@@ -1062,12 +1094,12 @@
             canvas.height = 512;
             const ctx = canvas.getContext('2d');
 
-            ctx.fillStyle = '#D4AC6E';
+            ctx.fillStyle = '#C89B63';
             ctx.fillRect(0, 0, 512, 512);
 
             for (let i = 0; i < 70; i++) {
                 const y = Math.random() * 512;
-                ctx.strokeStyle = Math.random() > 0.5 ? 'rgba(140, 95, 40, 0.15)' : 'rgba(235, 195, 130, 0.20)';
+                ctx.strokeStyle = Math.random() > 0.5 ? 'rgba(115, 75, 30, 0.16)' : 'rgba(225, 185, 125, 0.18)';
                 ctx.lineWidth = 1 + Math.random() * 3.5;
                 ctx.beginPath();
                 ctx.moveTo(0, y);
@@ -1082,6 +1114,31 @@
             return texture;
         }
 
+        function createGraniteTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#363E4A';
+            ctx.fillRect(0, 0, 512, 512);
+
+            const specks = ['#262C35', '#495363', '#606B7D', '#1D2229'];
+            for (let i = 0; i < 3500; i++) {
+                ctx.fillStyle = specks[i % specks.length];
+                const x = Math.random() * 512;
+                const y = Math.random() * 512;
+                const s = 1 + Math.random() * 2.5;
+                ctx.fillRect(x, y, s, s);
+            }
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(6, 2);
+            return texture;
+        }
+
         // ==========================================
         // 7. GLTFLOADER E TABELA DE ESCALAS PROPORCIONAIS
         // ==========================================
@@ -1089,14 +1146,15 @@
         const loadedAssets = {};
 
         const ASSET_LIST = [
-            'chao.glb', 'cooktop.glb', 'frigideira.glb', 'geladeira.glb', 'torradeira.glb',
+            'chao.glb', 'fogao.glb', 'cooktop.glb', 'frigideira.glb', 'geladeira.glb', 'torradeira.glb',
             'prato-quadrado.glb', 'espatula.glb', 'faca-de-cozinhar.glb', 'faca.glb',
             'colher.glb', 'fuet.glb', 'bottom-pao.glb', 'burger-top.glb',
             'pao-burger.glb', 'fatia-queijo.glb', 'carne-crua-burger.glb',
-            'carne-burger.glb', 'tomate.glb', 'tomate-cortado.glb',
+            'carne-burger.glb',
             'assadeira.glb', 'saleiro.glb', 'pimenta-do-reino.glb',
             'pote-de-geleia.glb', 'manteiga-de-amendoim.glb', 'garrafa.glb',
-            'papel-toalha.glb', 'lixeira.glb',
+            'papel-toalha.glb', 'rolo-pape-toalha.glb', 'lixeira.glb',
+            'sininho.glb', 'prato-montado-hamburguer.glb', 'prato-montado-hamburger.glb',
             'lampada.glb', 'quadro-negro.glb', 'armario-cozinha.glb',
             'relogio.glb', 'mesa-com-comida.glb',
             'porta.glb', 'janela.glb',
@@ -1125,6 +1183,47 @@
 
         function fitAndPlaceOnSurface(model, x, surfaceY, z) {
             return placeOnSurface(model, x, surfaceY, z);
+        }
+
+        // Cria bandeja/recipiente elegante para manter ingredientes e condimentos ordenados
+        function createIngredientTrayMesh(width = 0.22, depth = 0.24, colorHex = 0xF8FAFC, dividers = 0) {
+            const group = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.35, metalness: 0.1 });
+
+            const base = new THREE.Mesh(new THREE.BoxGeometry(width, 0.008, depth), mat);
+            base.position.y = 0.004;
+            group.add(base);
+
+            const rimH = 0.020;
+            const rimT = 0.012;
+            const frontRim = new THREE.Mesh(new THREE.BoxGeometry(width, rimH, rimT), mat);
+            frontRim.position.set(0, rimH / 2, depth / 2 - rimT / 2);
+            const backRim = frontRim.clone();
+            backRim.position.z = -depth / 2 + rimT / 2;
+
+            const leftRim = new THREE.Mesh(new THREE.BoxGeometry(rimT, rimH, depth), mat);
+            leftRim.position.set(-width / 2 + rimT / 2, rimH / 2, 0);
+            const rightRim = leftRim.clone();
+            rightRim.position.x = width / 2 - rimT / 2;
+
+            group.add(frontRim, backRim, leftRim, rightRim);
+
+            if (dividers > 0) {
+                const step = width / (dividers + 1);
+                for (let i = 1; i <= dividers; i++) {
+                    const div = new THREE.Mesh(new THREE.BoxGeometry(0.008, rimH * 0.85, depth - rimT * 1.5), mat);
+                    div.position.set(-width / 2 + step * i, (rimH * 0.85) / 2, 0);
+                    group.add(div);
+                }
+            }
+
+            group.traverse(c => {
+                if (c.isMesh) {
+                    c.castShadow = true;
+                    c.receiveShadow = true;
+                }
+            });
+            return group;
         }
 
         async function loadModel(path) {
@@ -1166,57 +1265,61 @@
         }
 
         const TARGET_SIZES = {
-            // Estrutura e Móveis Grandes
-            'geladeira': 1.85,            // 1,85m de altura
-            'estante': 1.85,              // 1,85m de altura na parede lateral esquerda
-            'porta': 2.10,                // 2,10m de altura padrão
-            'janela': 1.20,               // 1,20m
-            'quadro-negro': 2.50,         // 2,50m de largura na parede frontal
-            'armario-cozinha': 1.00,      // 1,00m de largura
-            'mesa-com-comida': 1.15,      // 1,15m (conjunto compacto de mesa + cadeiras proporcional ao salão)
-            'lixeira': 0.58,              // 58cm de altura
-            'relogio': 0.52,              // 52cm de diâmetro
-            'lampada': 0.30,              // 30cm
-            'vaso-de-planta': 0.62,       // 62cm de altura (usado sobre suporte de madeira)
-            'vaso-de-planta2': 0.78,      // 78cm de altura (usado sobre suporte de madeira)
+            'geladeira': 1.85,
+            'estante': 1.85,
+            'fogao': 1.24,
+            'porta': 2.10,
+            'janela': 1.20,
+            'quadro-negro': 2.50,
+            'armario-cozinha': 1.00,
+            'mesa-com-comida': 1.15,
+            'lixeira': 0.58,
+            'relogio': 0.52,
+            'lampada': 0.30,
+            'vaso-de-planta': 0.62,
+            'vaso-de-planta2': 0.78,
 
-            // Equipamentos da Bancada Ampliada (Bancada = 0.91m altura / 5.90m largura)
-            'cooktop': 0.68,              // 68cm
-            'frigideira': 0.54,           // 54cm (considera o comprimento do cabo)
-            'prato-quadrado': 0.35,       // 35cm
-            'assadeira': 0.40,            // 40cm
-            'torradeira': 0.35,           // 35cm
+            'cooktop': 0.68,
+            'frigideira': 0.54,
+            'prato-quadrado': 0.35,
+            'prato-montado-hamburguer': 0.35,
+            'prato-montado-hamburger': 0.35,
+            'assadeira': 0.40,
+            'torradeira': 0.35,
+            'sininho': 0.13,
+            'rolo-pape-toalha': 0.32,
 
-            // Ingredientes do Hambúrguer (Proporcionais ao prato de 35cm)
-            'bottom-pao': 0.16,           // 16cm
-            'burger-top': 0.16,           // 16cm
-            'pao-burger': 0.16,           // 16cm
-            'carne-crua-burger': 0.16,    // 16cm
-            'carne-burger': 0.16,         // 16cm
-            'fatia-queijo': 0.16,         // 16cm
-            'tomate': 0.10,               // 10cm
-            'tomate-cortado': 0.10,       // 10cm
+            'bottom-pao': 0.16,
+            'burger-top': 0.16,
+            'pao-burger': 0.16,
+            'carne-crua-burger': 0.16,
+            'carne-burger': 0.16,
+            'fatia-queijo': 0.16,
 
-            // Utensílios e Condimentos (Proporcionais à bancada de 5.90m)
-            'faca': 0.31,                 // 31cm
-            'faca-de-cozinhar': 0.31,     // 31cm
-            'espatula': 0.31,             // 31cm
-            'colher': 0.27,               // 27cm
-            'fuet': 0.27,                 // 27cm
-            'garrafa': 0.33,              // 33cm
-            'papel-toalha': 0.32,         // 32cm
-            'manteiga-de-amendoim': 0.17, // 17cm
-            'pote-de-geleia': 0.16,       // 16cm
-            'saleiro': 0.11,              // 11cm
-            'pimenta-do-reino': 0.11      // 11cm
+            'faca': 0.31,
+            'faca-de-cozinhar': 0.31,
+            'espatula': 0.31,
+            'colher': 0.27,
+            'fuet': 0.27,
+            'garrafa': 0.33,
+            'papel-toalha': 0.62,
+            'manteiga-de-amendoim': 0.17,
+            'pote-de-geleia': 0.16,
+            'saleiro': 0.12,
+            'pimenta-do-reino': 0.12
         };
 
         function getAsset(key) {
+            let assetKey = key;
+            if (!loadedAssets[assetKey] && assetKey === 'prato-montado-hamburguer' && loadedAssets['prato-montado-hamburger']) {
+                assetKey = 'prato-montado-hamburger';
+            }
+
             let mesh;
-            if (loadedAssets[key]) {
-                mesh = loadedAssets[key].clone(true);
+            if (loadedAssets[assetKey]) {
+                mesh = loadedAssets[assetKey].clone(true);
                 
-                const targetSize = TARGET_SIZES[key] || 0.20;
+                const targetSize = TARGET_SIZES[assetKey] || 0.20;
                 mesh.scale.set(1, 1, 1);
                 mesh.updateMatrixWorld(true);
 
@@ -1262,6 +1365,36 @@
                 case 'prato-quadrado':
                     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.018, 0.34), new THREE.MeshStandardMaterial({ color: 0xFFFFFF }));
                     break;
+                case 'prato-montado-hamburguer':
+                case 'prato-montado-hamburger':
+                    mesh = new THREE.Group();
+                    const pBase = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.016, 0.32), new THREE.MeshStandardMaterial({ color: 0xFFFFFF }));
+                    pBase.position.y = 0.008;
+                    const bBottom = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.08, 0.032, 14), new THREE.MeshStandardMaterial({ color: 0xD4A373 }));
+                    bBottom.position.y = 0.032;
+                    const bMeat = new THREE.Mesh(new THREE.CylinderGeometry(0.088, 0.088, 0.028, 16), new THREE.MeshStandardMaterial({ color: 0x4A2511 }));
+                    bMeat.position.y = 0.062;
+                    const bCheese = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.008, 0.16), new THREE.MeshStandardMaterial({ color: 0xFFD700 }));
+                    bCheese.position.y = 0.080;
+                    const bTopGeo = new THREE.SphereGeometry(0.082, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+                    bTopGeo.scale(1, 0.65, 1);
+                    const bTop = new THREE.Mesh(bTopGeo, new THREE.MeshStandardMaterial({ color: 0xD2B48C }));
+                    bTop.position.y = 0.084;
+                    mesh.add(pBase, bBottom, bMeat, bCheese, bTop);
+                    break;
+                case 'sininho':
+                    mesh = createServiceBellMesh();
+                    break;
+                case 'rolo-pape-toalha':
+                    mesh = new THREE.Group();
+                    const baseDisk = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.015, 18), new THREE.MeshStandardMaterial({ color: 0xCBD5E1, metalness: 0.8 }));
+                    baseDisk.position.y = 0.0075;
+                    const paperRoll = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.26, 18), new THREE.MeshStandardMaterial({ color: 0xFFFFFF, roughness: 0.85 }));
+                    paperRoll.position.y = 0.145;
+                    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.30, 12), new THREE.MeshStandardMaterial({ color: 0x94A3B8, metalness: 0.85 }));
+                    rod.position.y = 0.15;
+                    mesh.add(baseDisk, paperRoll, rod);
+                    break;
                 case 'bottom-pao':
                     mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.09, 0.039, 14), new THREE.MeshStandardMaterial({ color: 0xD4A373 }));
                     break;
@@ -1295,18 +1428,12 @@
                     foliage.position.y = 0.45;
                     mesh.add(pot, foliage);
                     break;
-                case 'tomate':
-                    mesh = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), new THREE.MeshStandardMaterial({ color: 0xD32F2F }));
-                    break;
-                case 'tomate-cortado':
-                    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.010, 12), new THREE.MeshStandardMaterial({ color: 0xE53935 }));
-                    break;
                 case 'faca':
                 case 'faca-de-cozinhar':
                 case 'espatula':
                 case 'colher':
                 case 'fuet':
-                    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.008, 0.28), new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.7 }));
+                    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.28, 0.008), new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.7 }));
                     break;
                 case 'torradeira':
                     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.22, 0.20), new THREE.MeshStandardMaterial({ color: 0xD0D5DD, metalness: 0.8 }));
@@ -1315,11 +1442,11 @@
                     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.030, 0.30), new THREE.MeshStandardMaterial({ color: 0xB0B8C0, metalness: 0.7 }));
                     break;
                 case 'papel-toalha':
-                    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.31, 16), new THREE.MeshStandardMaterial({ color: 0xFFFFFF }));
+                    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.42, 16), new THREE.MeshStandardMaterial({ color: 0xFFFFFF }));
                     break;
                 case 'saleiro':
                 case 'pimenta-do-reino':
-                    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.030, 0.10, 12), new THREE.MeshStandardMaterial({ color: key === 'saleiro' ? 0xFFFFFF : 0x222222 }));
+                    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.030, 0.11, 12), new THREE.MeshStandardMaterial({ color: key === 'saleiro' ? 0xFFFFFF : 0x222222 }));
                     break;
                 case 'lixeira':
                     mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.16, 0.58, 16), new THREE.MeshStandardMaterial({ color: 0x334155 }));
@@ -1450,26 +1577,97 @@
             return group;
         }
 
+        function createServiceBellMesh() {
+            const group = new THREE.Group();
+            const chromeMat = new THREE.MeshStandardMaterial({ color: 0xE2E8F0, metalness: 0.9, roughness: 0.15 });
+            const baseMat = new THREE.MeshStandardMaterial({ color: 0x1E293B, roughness: 0.5 });
+
+            const base = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.056, 0.012, 20), baseMat);
+            base.position.y = 0.006;
+            group.add(base);
+
+            const dome = new THREE.Mesh(
+                new THREE.SphereGeometry(0.046, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+                chromeMat
+            );
+            dome.position.y = 0.012;
+            group.add(dome);
+
+            const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.016, 12), chromeMat);
+            pin.position.y = 0.062;
+            group.add(pin);
+
+            group.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+            return group;
+        }
+
+        function createTicketSpikeMesh() {
+            const group = new THREE.Group();
+            const steelMat = new THREE.MeshStandardMaterial({ color: 0x94A3B8, metalness: 0.85, roughness: 0.25 });
+            const paperMat = new THREE.MeshStandardMaterial({ color: 0xFEF9C3, roughness: 0.9, side: THREE.DoubleSide });
+
+            const base = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.045, 0.010, 16), steelMat);
+            base.position.y = 0.005;
+            group.add(base);
+
+            const spike = new THREE.Mesh(new THREE.CylinderGeometry(0.002, 0.004, 0.17, 8), steelMat);
+            spike.position.y = 0.09;
+            group.add(spike);
+
+            for (let i = 0; i < 2; i++) {
+                const ticket = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.095), paperMat);
+                ticket.rotation.x = Math.PI / 2 + (i === 0 ? 0.15 : -0.1);
+                ticket.rotation.z = i * 0.6;
+                ticket.position.y = 0.045 + i * 0.025;
+                group.add(ticket);
+            }
+
+            group.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+            return group;
+        }
+
+        function createTakeoutBagMesh() {
+            const group = new THREE.Group();
+            const kraftMat = new THREE.MeshStandardMaterial({ color: 0xC69C6D, roughness: 0.85 });
+            const darkKraftMat = new THREE.MeshStandardMaterial({ color: 0xB08556, roughness: 0.85 });
+            const stickerMat = new THREE.MeshStandardMaterial({ color: 0xF26419, roughness: 0.5 });
+
+            const bag = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.21, 0.10), kraftMat);
+            bag.position.set(0, 0.105, 0);
+            group.add(bag);
+
+            const bagFold = new THREE.Mesh(new THREE.BoxGeometry(0.154, 0.032, 0.104), darkKraftMat);
+            bagFold.position.set(0, 0.198, 0);
+            group.add(bagFold);
+
+            const seal = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.028, 0.004), stickerMat);
+            seal.position.set(0, 0.18, 0.052);
+            group.add(seal);
+
+            group.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+            return group;
+        }
+
         // ==========================================
-        // 8. CENÁRIO DA COZINHA E SALÃO (DINÂMICO)
+        // 8. CENÁRIO DA COZINHA E SALÃO
         // ==========================================
         function buildKitchen() {
-            const topMat = new THREE.MeshStandardMaterial({ 
-                map: createWoodTexture(), 
-                roughness: 0.4, 
-                metalness: 0.05,
+            const graniteTopMat = new THREE.MeshStandardMaterial({ 
+                map: createGraniteTexture(), 
+                roughness: 0.32, 
+                metalness: 0.12,
                 shadowSide: THREE.DoubleSide
             });
             const cabinetMat = new THREE.MeshStandardMaterial({ color: 0x1B2A4A, roughness: 0.45, flatShading: true });
             const handleMat = new THREE.MeshStandardMaterial({ color: 0xD4AF37, roughness: 0.25, metalness: 0.8, flatShading: true });
             const tileMat = new THREE.MeshStandardMaterial({ map: createTileTexture(), roughness: 0.15, color: 0xFFFFFF });
             const stainlessMat = new THREE.MeshStandardMaterial({ color: 0xD0D5DD, metalness: 0.85, roughness: 0.2, flatShading: true });
+            const woodTrayMat = new THREE.MeshStandardMaterial({ map: createWoodTexture(), roughness: 0.4 });
 
             const ROOM_WIDTH = ROOM_CONFIG.width;
             const ROOM_DEPTH = ROOM_CONFIG.depth;
             const ROOM_HEIGHT = ROOM_CONFIG.height;
 
-            // Carregamento do modelo 3D do chão ajustado exatamente às medidas da sala
             const floorMesh = getAsset('chao');
             floorMesh.updateMatrixWorld(true);
             const floorBox = new THREE.Box3().setFromObject(floorMesh);
@@ -1487,7 +1685,6 @@
             floorMesh.receiveShadow = true;
             scene.add(floorMesh);
 
-            // Área clicável de teletransporte VR restrita ao interior seguro da sala
             const walkableWidth = ROOM_WIDTH - WALL_MARGIN * 2;
             const walkableDepth = ROOM_DEPTH - WALL_MARGIN * 2;
             teleportFloorMesh = new THREE.Mesh(
@@ -1525,9 +1722,7 @@
             ceiling.rotation.x = Math.PI / 2;
             scene.add(ceiling);
 
-            // ==========================================
-            // LUMINÁRIAS DE TETO (lampada.glb)
-            // ==========================================
+            // Luminárias de teto
             const lampPositions = [
                 { x: -3.60, z: -1.65 },
                 { x: 0.00,  z: -1.65 },
@@ -1549,7 +1744,7 @@
             });
 
             // ==========================================
-            // BANCADA PRINCIPAL AMPLIADA (5.90m LARGURA x 0.82m PROFUNDIDADE)
+            // BANCADA GOURMET EM L (GRANITO ESCURO + FRONTÃO + RODAPÉ)
             // ==========================================
             const COUNTER_TOP_Y = 0.9100;
             const COUNTER_BASE_HEIGHT = 0.8600;
@@ -1567,7 +1762,11 @@
             leftWingBase.receiveShadow = true;
             scene.add(leftWingBase);
 
-            // 8 gavetas distribuídas ao longo de toda a frente da bancada ampliada
+            // Rodapé metálico inferior
+            const plinth = new THREE.Mesh(new THREE.BoxGeometry(5.92, 0.08, 0.84), stainlessMat);
+            plinth.position.set(1.20, 0.04, -0.64 + COUNTER_SHIFT_Z);
+            scene.add(plinth);
+
             for (let i = 0; i < 8; i++) {
                 const drawerX = -0.45 + i * 0.60;
                 const drawer = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.22, 0.02), new THREE.MeshStandardMaterial({ color: 0x142038 }));
@@ -1588,27 +1787,31 @@
             topShape.lineTo(-1.75, -0.45);
             topShape.closePath();
 
-            const topGeo = new THREE.ExtrudeGeometry(topShape, { depth: TOP_THICKNESS, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.004, bevelThickness: 0.004 });
+            const topGeo = new THREE.ExtrudeGeometry(topShape, { depth: TOP_THICKNESS, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.005, bevelThickness: 0.005 });
             topGeo.rotateX(-Math.PI / 2);
 
-            const lShapeTop = new THREE.Mesh(topGeo, topMat);
+            const lShapeTop = new THREE.Mesh(topGeo, graniteTopMat);
             lShapeTop.position.set(0.00, COUNTER_BASE_HEIGHT, COUNTER_SHIFT_Z);
             lShapeTop.castShadow = true;
             lShapeTop.receiveShadow = true;
             scene.add(lShapeTop);
 
+            // Frontão (espelho de granito encostado na parede atrás da bancada)
+            const backsplash = new THREE.Mesh(new THREE.BoxGeometry(5.90, 0.14, 0.025), graniteTopMat);
+            backsplash.position.set(1.20, COUNTER_TOP_Y + 0.07, BACK_WALL_Z + 0.015);
+            backsplash.receiveShadow = true;
+            scene.add(backsplash);
+
             const LEVEL_1_Y = COUNTER_TOP_Y + 0.003;
 
-            // Geladeira encostada rente à parede do fundo sem atravessar os azulejos
             const fridgeMesh = getAsset('geladeira');
-            placeOnSurface(fridgeMesh, -2.75, 0.0, BACK_WALL_Z + 0.35);
+            placeOnSurface(fridgeMesh, -5.15, 0.0, BACK_WALL_Z + 0.35);
             const fridgeBox = new THREE.Box3().setFromObject(fridgeMesh);
             if (!fridgeBox.isEmpty()) {
                 fridgeMesh.position.z += (BACK_WALL_Z + 0.01) - fridgeBox.min.z;
             }
             scene.add(fridgeMesh);
 
-            // Estante de armazenamento encostada na parede do lado esquerdo (estante.glb)
             const estanteMesh = getAsset('estante');
             placeOnSurface(estanteMesh, LEFT_WALL_X + 0.30, 0.0, -1.65, 0, Math.PI / 2, 0);
             const estanteBox = new THREE.Box3().setFromObject(estanteMesh);
@@ -1618,27 +1821,106 @@
             }
             scene.add(estanteMesh);
 
-            // Vaso decorativo compacto no topo da estante
             const finalEstanteBox = new THREE.Box3().setFromObject(estanteMesh);
             if (!finalEstanteBox.isEmpty()) {
                 const estanteCenter = new THREE.Vector3();
                 finalEstanteBox.getCenter(estanteCenter);
+                const estanteSize = new THREE.Vector3();
+                finalEstanteBox.getSize(estanteSize);
+
+                // Planta no topo da estante
                 const plantaEstante = getAsset('vaso-de-planta');
                 plantaEstante.scale.multiplyScalar(0.68);
-                placeOnSurface(plantaEstante, estanteCenter.x, finalEstanteBox.max.y, estanteCenter.z + 0.15, 0, 0.4, 0);
+                placeOnSurface(plantaEstante, estanteCenter.x, finalEstanteBox.max.y - 0.145, estanteCenter.z + 0.15, 0, 0.4, 0);
                 scene.add(plantaEstante);
+
+                // Preencher as prateleiras vazias da estante com estoque organizado
+                const shelfY1 = finalEstanteBox.min.y + estanteSize.y * 0.11;
+                const shelfY2 = finalEstanteBox.min.y + estanteSize.y * 0.38;
+                const shelfY3 = finalEstanteBox.min.y + estanteSize.y * 0.65;
+
+                // Prateleira superior intermediária: potes de geleia, manteiga de amendoim e garrafa
+                const pote1 = getAsset('pote-de-geleia');
+                placeOnSurface(pote1, estanteCenter.x, shelfY3, estanteCenter.z - 0.28, 0, 0.2, 0);
+                scene.add(pote1);
+
+                const manteiga1 = getAsset('manteiga-de-amendoim');
+                placeOnSurface(manteiga1, estanteCenter.x, shelfY3, estanteCenter.z - 0.08, 0, -0.15, 0);
+                scene.add(manteiga1);
+
+                const garrafaEstante1 = getAsset('garrafa');
+                placeOnSurface(garrafaEstante1, estanteCenter.x, shelfY3, estanteCenter.z + 0.14, 0, 0.1, 0);
+                scene.add(garrafaEstante1);
+
+                const garrafaEstante2 = getAsset('garrafa');
+                placeOnSurface(garrafaEstante2, estanteCenter.x, shelfY3, estanteCenter.z + 0.30, 0, -0.2, 0);
+                scene.add(garrafaEstante2);
+
+                // Prateleira do meio: saleiro, pimenta, assadeira com pães extras
+                const saleiroEstante = getAsset('saleiro');
+                placeOnSurface(saleiroEstante, estanteCenter.x, shelfY2, estanteCenter.z - 0.28);
+                scene.add(saleiroEstante);
+
+                const pimentaEstante = getAsset('pimenta-do-reino');
+                placeOnSurface(pimentaEstante, estanteCenter.x, shelfY2, estanteCenter.z - 0.15);
+                scene.add(pimentaEstante);
+
+                const assadeiraEstante = getAsset('assadeira');
+                assadeiraEstante.scale.multiplyScalar(0.85);
+                placeOnSurface(assadeiraEstante, estanteCenter.x, shelfY2, estanteCenter.z + 0.16, 0, Math.PI / 2, 0);
+                scene.add(assadeiraEstante);
+
+                const aEstanteBox = new THREE.Box3().setFromObject(assadeiraEstante);
+                const aEstanteInnerY = !aEstanteBox.isEmpty() ? aEstanteBox.min.y + 0.012 : shelfY2 + 0.012;
+                const paoEstante = getAsset('pao-burger');
+                placeOnSurface(paoEstante, estanteCenter.x, aEstanteInnerY, estanteCenter.z + 0.16, 0, 0.4, 0);
+                scene.add(paoEstante);
+
+                // Prateleira inferior: pilha de pratos e assadeira extra
+                const assadeiraInf = getAsset('assadeira');
+                assadeiraInf.scale.multiplyScalar(0.85);
+                placeOnSurface(assadeiraInf, estanteCenter.x, shelfY1, estanteCenter.z - 0.18, 0, Math.PI / 2, 0);
+                scene.add(assadeiraInf);
+
+                let estantePlateY = shelfY1;
+                for (let p = 0; p < 3; p++) {
+                    const pratoEstante = getAsset('prato-quadrado');
+                    pratoEstante.scale.multiplyScalar(0.88);
+                    placeOnSurface(pratoEstante, estanteCenter.x, estantePlateY, estanteCenter.z + 0.20, 0, p * 0.08, 0);
+                    scene.add(pratoEstante);
+                    const pBox = new THREE.Box3().setFromObject(pratoEstante);
+                    estantePlateY = !pBox.isEmpty() ? pBox.max.y : estantePlateY + 0.016;
+                }
             }
 
-            // Lixeiras nas extremidades da área de preparo/bancada (lixeira.glb)
+            // Fogão maior no canto esquerdo, com bom respiro em relação à geladeira
+            const fogaoMesh = getAsset('fogao');
+            placeOnSurface(fogaoMesh, -3.55, 0.0, BACK_WALL_Z + 0.42);
+            const fogaoBox = new THREE.Box3().setFromObject(fogaoMesh);
+            if (!fogaoBox.isEmpty()) {
+                fogaoMesh.position.z += (BACK_WALL_Z + 0.01) - fogaoBox.min.z;
+                fogaoMesh.updateMatrixWorld(true);
+            }
+            scene.add(fogaoMesh);
+
+            // Frigideira apoiada na grelha do fogão (abaixo do painel traseiro)
+            const updatedFogaoBox = new THREE.Box3().setFromObject(fogaoMesh);
+            if (!updatedFogaoBox.isEmpty()) {
+                const fogaoHeight = updatedFogaoBox.max.y - updatedFogaoBox.min.y;
+                const cooktopSurfaceY = updatedFogaoBox.min.y + fogaoHeight * 0.72;
+                const frigideiraFogao = getAsset('frigideira');
+                placeOnSurface(frigideiraFogao, -3.68, cooktopSurfaceY, fogaoMesh.position.z + 0.08, 0, 0.4, 0);
+                scene.add(frigideiraFogao);
+            }
+
             const lixeiraDireita = getAsset('lixeira');
             placeOnSurface(lixeiraDireita, 4.50, 0.0, -0.64 + COUNTER_SHIFT_Z);
             scene.add(lixeiraDireita);
 
             const lixeiraEsquerda = getAsset('lixeira');
-            placeOnSurface(lixeiraEsquerda, -2.12, 0.0, BACK_WALL_Z + 0.32);
+            placeOnSurface(lixeiraEsquerda, -2.25, 0.0, BACK_WALL_Z + 0.32);
             scene.add(lixeiraEsquerda);
 
-            // Coifa ampliada e posicionada exatamente acima do cooktop
             const hoodCanopy = new THREE.Mesh(new THREE.BoxGeometry(0.80, 0.18, 0.65), stainlessMat);
             hoodCanopy.position.set(COOK_STATION_X, 2.28, COOK_STATION_Z);
             hoodCanopy.castShadow = true;
@@ -1648,10 +1930,8 @@
             hoodDuct.position.set(COOK_STATION_X, 3.24, COOK_STATION_Z);
             scene.add(hoodDuct);
 
-            // Prateleira superior ampliada acima do lado direito da bancada e rente à parede
-            const shelfMat = new THREE.MeshStandardMaterial({ map: createWoodTexture(), roughness: 0.4 });
             const shelfZ = BACK_WALL_Z + 0.13;
-            const shelfBoard = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.035, 0.25), shelfMat);
+            const shelfBoard = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.035, 0.25), woodTrayMat);
             shelfBoard.position.set(2.45, 1.80, shelfZ);
             shelfBoard.castShadow = true;
             shelfBoard.receiveShadow = true;
@@ -1661,7 +1941,6 @@
             const manteigaMesh = getAsset('manteiga-de-amendoim'); placeOnSurface(manteigaMesh, 2.45, 1.818, shelfZ); scene.add(manteigaMesh);
             const garrafaMesh = getAsset('garrafa'); placeOnSurface(garrafaMesh, 2.90, 1.818, shelfZ); scene.add(garrafaMesh);
 
-            // Armários superiores na parede do fundo
             const alignToBackWall = (mesh, centerX, bottomY, wallOffset = 0.008) => {
                 mesh.rotation.set(0, 0, 0);
                 mesh.position.set(centerX, bottomY, BACK_WALL_Z + 0.15);
@@ -1679,9 +1958,8 @@
             };
 
             const backCabinetsLayout = [
-                { x: -4.95, y: 2.15 },
-                { x: -3.90, y: 2.15 },
-                { x:  0.15, y: 2.28 },
+                { x: -3.45, y: 2.15 },
+                { x: -2.35, y: 2.15 },
                 { x:  2.20, y: 2.22 },
                 { x:  3.30, y: 2.22 },
                 { x:  4.40, y: 2.22 }
@@ -1693,9 +1971,6 @@
                 scene.add(armarioFundo);
             });
 
-            // ==========================================
-            // PAREDE DA FRENTE (LOUSA MAIOR, ARMÁRIOS MAIS BAIXOS E RELÓGIO MAIOR)
-            // ==========================================
             const alignToFrontWall = (mesh, centerX, bottomY, wallOffset = 0.008) => {
                 mesh.rotation.set(0, Math.PI, 0);
                 mesh.position.set(centerX, bottomY, FRONT_WALL_Z - 0.15);
@@ -1731,9 +2006,6 @@
             alignToFrontWall(relogioMesh, 0.0, quadroTopY + 0.25);
             scene.add(relogioMesh);
 
-            // ==========================================
-            // ALA ESQUERDA + ESTAÇÃO DE COCÇÃO (PROPORCIONAIS)
-            // ==========================================
             const cooktopMesh = getAsset('cooktop');
             placeOnSurface(cooktopMesh, COOK_STATION_X, COUNTER_TOP_Y + 0.002, COOK_STATION_Z);
             scene.add(cooktopMesh);
@@ -1747,9 +2019,8 @@
             scene.add(skilletMesh);
 
             const skilletBox = new THREE.Box3().setFromObject(skilletMesh);
-            window.skilletCenter = new THREE.Vector3(COOK_STATION_X, skilletBox.max.y + 0.002, COOK_STATION_Z);
+            window.skilletCenter = new THREE.Vector3(COOK_STATION_X, skilletBox.min.y + 0.012, COOK_STATION_Z);
 
-            // Bandeja de carne crua na ala esquerda da bancada
             const meatTray = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.015, 0.26), stainlessMat);
             placeOnSurface(meatTray, -1.30, LEVEL_1_Y, -0.35 + COUNTER_SHIFT_Z);
             scene.add(meatTray);
@@ -1757,7 +2028,6 @@
             const meatTrayBox = new THREE.Box3().setFromObject(meatTray);
             window.meatTrayCenter = new THREE.Vector3(-1.30, meatTrayBox.max.y + 0.002, -0.35 + COUNTER_SHIFT_Z);
 
-            // Torradeira e assadeira com pães na ala esquerda da bancada
             const torradeiraMesh = getAsset('torradeira');
             placeOnSurface(torradeiraMesh, -1.38, LEVEL_1_Y, -0.82 + COUNTER_SHIFT_Z, 0, Math.PI / 6, 0);
             scene.add(torradeiraMesh);
@@ -1777,88 +2047,163 @@
             placeOnSurface(paoEstoque2, -1.22, assadeiraInnerY, 0.19 + COUNTER_SHIFT_Z, 0, -0.4, 0);
             scene.add(paoEstoque2);
 
-            // Temperos e espátula entre o cooktop e a montagem
-            const saleiroMesh = getAsset('saleiro');
-            placeOnSurface(saleiroMesh, 0.12, LEVEL_1_Y, -0.86 + COUNTER_SHIFT_Z);
-            scene.add(saleiroMesh);
-
-            const pimentaMesh = getAsset('pimenta-do-reino');
-            placeOnSurface(pimentaMesh, 0.26, LEVEL_1_Y, -0.86 + COUNTER_SHIFT_Z);
-            scene.add(pimentaMesh);
-
-            const espatulaMesh = getAsset('espatula');
-            placeOnSurface(espatulaMesh, 0.16, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z, Math.PI / 2, 0.25, 0);
-            scene.add(espatulaMesh);
-
             // ==========================================
-            // ESTAÇÃO DE MONTAGEM (CENTRALIZADA EM X = 0.85)
+            // ESTAÇÃO DE MONTAGEM COMPACTA E HARMONIOSA
             // ==========================================
-            const yellowMatMesh = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.007, 0.50), new THREE.MeshStandardMaterial({ color: 0xFFD700 }));
-            placeOnSurface(yellowMatMesh, PLATE_CENTER.x, LEVEL_1_Y, PLATE_CENTER.z);
-            scene.add(yellowMatMesh);
+            const placematMesh = new THREE.Mesh(
+                new THREE.BoxGeometry(0.46, 0.005, 0.42),
+                new THREE.MeshStandardMaterial({ color: 0x1E293B, roughness: 0.7 })
+            );
+            placeOnSurface(placematMesh, PLATE_CENTER.x, LEVEL_1_Y, PLATE_CENTER.z);
+            scene.add(placematMesh);
 
             const plateMesh = getAsset('prato-quadrado');
-            placeOnSurface(plateMesh, PLATE_CENTER.x, LEVEL_1_Y + 0.009, PLATE_CENTER.z);
+            placeOnSurface(plateMesh, PLATE_CENTER.x, LEVEL_1_Y + 0.006, PLATE_CENTER.z);
             scene.add(plateMesh);
 
             const plateBox = new THREE.Box3().setFromObject(plateMesh);
             window.plateTopY = !plateBox.isEmpty() ? plateBox.max.y + 0.001 : 0.9350;
 
-            // Molhos entre a montagem e a tábua de corte
+            // Porta-condimentos compacto atrás do prato
+            const condimentTray = createIngredientTrayMesh(0.32, 0.14, 0xD0D5DD, 0);
+            placeOnSurface(condimentTray, 0.55, LEVEL_1_Y, -0.88 + COUNTER_SHIFT_Z);
+            scene.add(condimentTray);
+
+            const condimentSurfaceY = LEVEL_1_Y + 0.008;
+
             const ketchupBottle = createSqueezeBottleMesh(0xD32F2F);
-            placeOnSurface(ketchupBottle, 1.42, LEVEL_1_Y, -0.84 + COUNTER_SHIFT_Z);
+            placeOnSurface(ketchupBottle, 0.44, condimentSurfaceY, -0.88 + COUNTER_SHIFT_Z);
             scene.add(ketchupBottle);
 
             const mustardBottle = createSqueezeBottleMesh(0xFFD700);
-            placeOnSurface(mustardBottle, 1.56, LEVEL_1_Y, -0.84 + COUNTER_SHIFT_Z);
+            placeOnSurface(mustardBottle, 0.52, condimentSurfaceY, -0.88 + COUNTER_SHIFT_Z);
             scene.add(mustardBottle);
 
+            const saleiroMesh = getAsset('saleiro');
+            placeOnSurface(saleiroMesh, 0.60, condimentSurfaceY, -0.88 + COUNTER_SHIFT_Z);
+            scene.add(saleiroMesh);
+
+            const pimentaMesh = getAsset('pimenta-do-reino');
+            placeOnSurface(pimentaMesh, 0.67, condimentSurfaceY, -0.88 + COUNTER_SHIFT_Z);
+            scene.add(pimentaMesh);
+
+            // Bandeja única dividida em 3 compartimentos para os ingredientes (bem próxima ao prato)
+            const unifiedTray = createIngredientTrayMesh(0.72, 0.26, 0xF8FAFC, 2);
+            placeOnSurface(unifiedTray, 1.24, LEVEL_1_Y, -0.58 + COUNTER_SHIFT_Z);
+            scene.add(unifiedTray);
+
+            window.ingredientTraySurfaceY = LEVEL_1_Y + 0.008;
+
             // ==========================================
-            // ESTAÇÃO DE PREPARO E APOIO À DIREITA (PROPORCIONAIS)
+            // ESTAÇÃO DE ENTREGA / PASS-THROUGH (DIREITA)
             // ==========================================
-            const cuttingBoard = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.024, 0.44), new THREE.MeshStandardMaterial({ color: 0xB5651D }));
-            placeOnSurface(cuttingBoard, 2.05, LEVEL_1_Y, -0.58 + COUNTER_SHIFT_Z);
-            scene.add(cuttingBoard);
+            // 1. Campainha de pedido (sininho.glb) na frente e espeto de comandas atrás
+            const serviceBell = getAsset('sininho');
+            placeOnSurface(serviceBell, 1.98, LEVEL_1_Y, -0.42 + COUNTER_SHIFT_Z);
+            scene.add(serviceBell);
 
-            const cuttingBoardBox = new THREE.Box3().setFromObject(cuttingBoard);
-            window.boardTopY = cuttingBoardBox.max.y;
+            const ticketSpike = createTicketSpikeMesh();
+            placeOnSurface(ticketSpike, 1.98, LEVEL_1_Y, -0.82 + COUNTER_SHIFT_Z);
+            scene.add(ticketSpike);
 
-            const tomatoMesh = getAsset('tomate');
-            placeOnSurface(tomatoMesh, 1.94, LEVEL_1_Y, -0.90 + COUNTER_SHIFT_Z);
-            scene.add(tomatoMesh);
+            // 2. Bandeja de entrega com hambúrguer montado (prato-montado-hamburguer.glb), saco kraft e bebida
+            const deliveryTray = createIngredientTrayMesh(0.56, 0.36, 0x1E293B, 0);
+            placeOnSurface(deliveryTray, 2.52, LEVEL_1_Y, -0.58 + COUNTER_SHIFT_Z);
+            scene.add(deliveryTray);
 
-            const tomatoSlicedMesh = getAsset('tomate-cortado');
-            placeOnSurface(tomatoSlicedMesh, 2.14, LEVEL_1_Y, -0.90 + COUNTER_SHIFT_Z);
-            scene.add(tomatoSlicedMesh);
+            const readyBurgerPlate = getAsset('prato-montado-hamburguer');
+            placeOnSurface(readyBurgerPlate, 2.42, LEVEL_1_Y + 0.008, -0.55 + COUNTER_SHIFT_Z, 0, 0.15, 0);
+            scene.add(readyBurgerPlate);
 
-            // Utensílios, papel toalha e copos distribuídos proporcionalmente na extensão direita
-            const facaSimples = getAsset('faca');
-            placeOnSurface(facaSimples, 2.55, LEVEL_1_Y, -0.58 + COUNTER_SHIFT_Z, Math.PI / 2, 0, 0);
-            scene.add(facaSimples);
+            const takeoutBag = createTakeoutBagMesh();
+            placeOnSurface(takeoutBag, 2.67, LEVEL_1_Y + 0.008, -0.63 + COUNTER_SHIFT_Z, 0, -0.18, 0);
+            scene.add(takeoutBag);
 
-            const facaCozinhar = getAsset('faca-de-cozinhar');
-            placeOnSurface(facaCozinhar, 2.72, LEVEL_1_Y, -0.58 + COUNTER_SHIFT_Z, Math.PI / 2, 0.1, 0);
-            scene.add(facaCozinhar);
+            const deliveryDrink = getAsset('garrafa');
+            deliveryDrink.scale.multiplyScalar(0.72);
+            placeOnSurface(deliveryDrink, 2.68, LEVEL_1_Y + 0.008, -0.47 + COUNTER_SHIFT_Z);
+            scene.add(deliveryDrink);
 
-            const colherMesh = getAsset('colher');
-            placeOnSurface(colherMesh, 2.95, LEVEL_1_Y, -0.76 + COUNTER_SHIFT_Z, Math.PI / 2, -0.15, 0);
-            scene.add(colherMesh);
+            // 3. Pilha de 4 pratos limpos prontos para uso
+            let stackY = LEVEL_1_Y;
+            for (let i = 0; i < 4; i++) {
+                const sparePlate = getAsset('prato-quadrado');
+                placeOnSurface(sparePlate, 3.08, stackY, -0.58 + COUNTER_SHIFT_Z, 0, i * 0.04, 0);
+                scene.add(sparePlate);
 
-            const fuetMesh = getAsset('fuet');
-            placeOnSurface(fuetMesh, 3.12, LEVEL_1_Y, -0.76 + COUNTER_SHIFT_Z, Math.PI / 2, 0.2, 0);
-            scene.add(fuetMesh);
+                const pBox = new THREE.Box3().setFromObject(sparePlate);
+                stackY = !pBox.isEmpty() ? pBox.max.y : stackY + 0.018;
+            }
 
+            // 4. Rolo de papel toalha de bancada (rolo-pape-toalha.glb) antes dos copos vermelhos
+            const counterPaperTowel = getAsset('rolo-pape-toalha');
+            placeOnSurface(counterPaperTowel, 3.44, LEVEL_1_Y, -0.56 + COUNTER_SHIFT_Z, 0, -0.25, 0);
+            scene.add(counterPaperTowel);
+
+            // ==========================================
+            // BARRA MAGNÉTICA NA PAREDE PARA OS TALHERES
+            // ==========================================
+            const rackBar = new THREE.Mesh(
+                new THREE.BoxGeometry(0.95, 0.045, 0.025),
+                new THREE.MeshStandardMaterial({ color: 0x2B3440, metalness: 0.85, roughness: 0.25 })
+            );
+            rackBar.position.set(2.85, 1.42, BACK_WALL_Z + 0.015);
+            scene.add(rackBar);
+
+            const hangUtensilOnRack = (assetKey, posX) => {
+                const item = getAsset(assetKey);
+                item.rotation.set(0, 0, 0);
+                item.updateMatrixWorld(true);
+
+                const box = new THREE.Box3().setFromObject(item);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+
+                if (size.x >= size.y && size.x >= size.z) {
+                    item.rotation.z = Math.PI / 2;
+                } else if (size.z >= size.x && size.z >= size.y) {
+                    item.rotation.x = Math.PI / 2;
+                }
+                item.updateMatrixWorld(true);
+
+                const box2 = new THREE.Box3().setFromObject(item);
+                const size2 = new THREE.Vector3();
+                box2.getSize(size2);
+                if (size2.z > size2.x) {
+                    item.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+                    item.updateMatrixWorld(true);
+                }
+
+                const finalBox = new THREE.Box3().setFromObject(item);
+                const center = new THREE.Vector3();
+                finalBox.getCenter(center);
+
+                item.position.set(
+                    posX + (item.position.x - center.x),
+                    1.40 + (item.position.y - center.y),
+                    (BACK_WALL_Z + 0.030) - finalBox.min.z
+                );
+                item.updateMatrixWorld(true);
+                scene.add(item);
+            };
+
+            hangUtensilOnRack('faca', 2.48);
+            hangUtensilOnRack('faca-de-cozinhar', 2.66);
+            hangUtensilOnRack('espatula', 2.85);
+            hangUtensilOnRack('colher', 3.04);
+            hangUtensilOnRack('fuet', 3.22);
+
+            // ==========================================
+            // PAPEL TOALHA / PRATELEIRA FIXADO NA PAREDE
+            // ==========================================
             const papelToalhaMesh = getAsset('papel-toalha');
-            placeOnSurface(papelToalhaMesh, 3.45, LEVEL_1_Y, -0.82 + COUNTER_SHIFT_Z);
+            alignToBackWall(papelToalhaMesh, 3.74, 1.32, 0.006);
             scene.add(papelToalhaMesh);
 
-            const cup1 = createCupMesh(); cup1.position.set(3.65, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z); scene.add(cup1);
-            const cup2 = createCupMesh(); cup2.position.set(3.78, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z); scene.add(cup2);
-            const cup3 = createCupMesh(); cup3.position.set(3.91, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z); scene.add(cup3);
+            const cup1 = createCupMesh(); cup1.position.set(3.68, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z); scene.add(cup1);
+            const cup2 = createCupMesh(); cup2.position.set(3.81, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z); scene.add(cup2);
+            const cup3 = createCupMesh(); cup3.position.set(3.94, LEVEL_1_Y, -0.52 + COUNTER_SHIFT_Z); scene.add(cup3);
 
-            // ==========================================
-            // JANELAS ALINHADAS ÀS PAREDES LATERAIS
-            // ==========================================
             const addWallWindow = (isLeftWall, yBottom, zPos) => {
                 const win = getAsset('janela');
                 const rotY = isLeftWall ? 0 : Math.PI;
@@ -1866,7 +2211,6 @@
 
                 placeOnSurface(win, approxX, yBottom, zPos, 0, rotY, 0);
 
-                // Encosta a moldura da janela rente à parede sem afundar
                 const winBox = new THREE.Box3().setFromObject(win);
                 if (!winBox.isEmpty()) {
                     if (isLeftWall) {
@@ -1878,30 +2222,22 @@
                 scene.add(win);
             };
 
-            // Parede esquerda (longe da estante e na altura ideal)
             addWallWindow(true, 1.25, 0.20);
             addWallWindow(true, 1.25, 3.20);
-
-            // Parede direita (bem espaçadas da porta em z = 1.5)
             addWallWindow(false, 1.25, -0.90);
             addWallWindow(false, 1.25, 3.80);
 
-            // ==========================================
-            // PORTA E PLACA DE SAÍDA CENTRALIZADA
-            // ==========================================
             const portaMesh = getAsset('porta');
             placeOnSurface(portaMesh, RIGHT_WALL_X - 0.03, 0.0, 1.5, 0, -Math.PI / 2, 0);
 
             const portaBox = new THREE.Box3().setFromObject(portaMesh);
             if (!portaBox.isEmpty()) {
-                // Deixa a porta rente à parede direita sem atravessá-la
                 portaMesh.position.x -= portaBox.max.x - (RIGHT_WALL_X - 0.005);
                 portaMesh.updateMatrixWorld(true);
                 portaBox.setFromObject(portaMesh);
             }
             scene.add(portaMesh);
 
-            // Calcula o centro exato da porta para centralizar a placa acima dela
             const portaCenter = new THREE.Vector3();
             portaBox.getCenter(portaCenter);
 
@@ -1914,14 +2250,11 @@
             placaSaida.rotation.set(0, -Math.PI / 2, 0);
             scene.add(placaSaida);
 
-            // ==========================================
-            // PLANTAS DECORATIVAS EM SUPORTES DE MADEIRA (SALÃO DE REFEIÇÕES)
-            // ==========================================
             const plantsLayout = [
-                { key: 'vaso-de-planta2', x: -2.15, z: FRONT_WALL_Z - 0.35, rotY: 0.2,  standH: 0.45 }, // Esquerda do quadro-negro
-                { key: 'vaso-de-planta2', x:  2.15, z: FRONT_WALL_Z - 0.35, rotY: -0.2, standH: 0.45 }, // Direita do quadro-negro
-                { key: 'vaso-de-planta',  x: -6.35, z: FRONT_WALL_Z - 0.45, rotY: 0.6,  standH: 0.40 }, // Canto frontal esquerdo do salão
-                { key: 'vaso-de-planta',  x:  6.35, z: FRONT_WALL_Z - 0.45, rotY: -0.6, standH: 0.40 }  // Canto frontal direito do salão
+                { key: 'vaso-de-planta2', x: -2.15, z: FRONT_WALL_Z - 0.35, rotY: 0.2,  standH: 0.45 },
+                { key: 'vaso-de-planta2', x:  2.15, z: FRONT_WALL_Z - 0.35, rotY: -0.2, standH: 0.45 },
+                { key: 'vaso-de-planta',  x: -6.35, z: FRONT_WALL_Z - 0.45, rotY: 0.6,  standH: 0.40 },
+                { key: 'vaso-de-planta',  x:  6.35, z: FRONT_WALL_Z - 0.45, rotY: -0.6, standH: 0.40 }
             ];
 
             plantsLayout.forEach(cfg => {
@@ -1937,20 +2270,12 @@
                 scene.add(planta);
             });
 
-            // ==========================================
-            // ÁREA DAS MESAS (SALÃO DE REFEIÇÕES COMPLETO)
-            // ==========================================
             const diningTablesLayout = [
-                // Ala Esquerda
                 { x: -4.80, z: 1.80, rotY: 0.2 },
                 { x: -4.80, z: 3.90, rotY: -0.3 },
                 { x: -2.40, z: 2.20, rotY: 0.0 },
                 { x: -2.40, z: 4.20, rotY: 0.4 },
-
-                // Centro do Salão
                 { x: 0.00, z: 3.30, rotY: Math.PI / 4 },
-
-                // Ala Direita
                 { x: 2.40, z: 2.20, rotY: 0.0 },
                 { x: 2.40, z: 4.20, rotY: -0.4 },
                 { x: 4.80, z: 2.40, rotY: -0.2 },
@@ -1965,7 +2290,7 @@
         }
 
         // ==========================================
-        // 9. PAINEL DE RECEITA ESTILO TV (DINÂMICO)
+        // 9. PAINEL DE RECEITA ESTILO TV
         // ==========================================
         let recipeBoardMesh = null;
         let recipeCanvasCtx = null;
@@ -2190,12 +2515,14 @@
                 this.assemblyHeight = window.plateTopY || 0.9350;
                 this.isPlaying = false;
                 this.burgersCompleted = 0;
+                this.burgerStartTime = performance.now();
             }
 
             start() {
                 this.isPlaying = true;
                 this.burgersCompleted = 0;
                 this.score = 0;
+                this.burgerStartTime = performance.now();
                 document.getElementById('score-val').innerText = '0';
                 this.initTimer();
             }
@@ -2207,6 +2534,7 @@
             setRecipe(key) {
                 this.currentRecipeKey = key;
                 this.resetAssembly();
+                this.burgerStartTime = performance.now();
                 updateRecipeBoard();
             }
 
@@ -2267,16 +2595,17 @@
                 if (itemObj.type === expectedType) {
                     audioManager.playPop();
 
-                    const platePos = new THREE.Vector3(PLATE_CENTER.x, this.assemblyHeight, PLATE_CENTER.z);
+                    itemObj.mesh.updateMatrixWorld(true);
+                    const itemBox = new THREE.Box3().setFromObject(itemObj.mesh);
+                    const minOffset = itemBox.min.y - itemObj.mesh.position.y;
+                    const realHeight = Math.max(itemBox.max.y - itemBox.min.y, 0.008);
+
+                    const targetY = this.assemblyHeight - minOffset;
+                    const platePos = new THREE.Vector3(PLATE_CENTER.x, targetY, PLATE_CENTER.z);
                     vfxManager.addLerp(itemObj.mesh, platePos);
 
-                    const heights = {
-                        'bottom-pao': 0.039,
-                        'carne-burger': 0.030,
-                        'fatia-queijo': 0.010,
-                        'burger-top': 0.055
-                    };
-                    this.assemblyHeight += (heights[itemObj.type] || 0.025);
+                    const stackStep = itemObj.type === 'fatia-queijo' ? realHeight + 0.004 : realHeight;
+                    this.assemblyHeight += stackStep;
 
                     this.stackedItems.push(itemObj);
 
@@ -2300,9 +2629,31 @@
                 }
             }
 
+            calculateSpeedRandomPoints(elapsedSeconds) {
+                let minPts, maxPts;
+                if (elapsedSeconds <= 6) {
+                    minPts = 1250;
+                    maxPts = 1500;
+                } else if (elapsedSeconds <= 11) {
+                    minPts = 950;
+                    maxPts = 1249;
+                } else if (elapsedSeconds <= 18) {
+                    minPts = 650;
+                    maxPts = 949;
+                } else if (elapsedSeconds <= 28) {
+                    minPts = 400;
+                    maxPts = 649;
+                } else {
+                    minPts = 200;
+                    maxPts = 399;
+                }
+                return Math.floor(Math.random() * (maxPts - minPts + 1)) + minPts;
+            }
+
             handleBurgerCompleted() {
                 this.burgersCompleted++;
-                const pointsGained = 1000;
+                const elapsedSeconds = Math.max(1, (performance.now() - this.burgerStartTime) / 1000);
+                const pointsGained = this.calculateSpeedRandomPoints(elapsedSeconds);
                 this.addScore(pointsGained);
 
                 audioManager.playVictoryFanfare();
@@ -2317,6 +2668,7 @@
             continueNextBurger() {
                 document.getElementById('burger-success-modal').classList.remove('active');
                 this.resetAssembly();
+                this.burgerStartTime = performance.now();
                 this.isPlaying = true;
             }
 
@@ -2464,12 +2816,12 @@
         }
 
         // ==========================================
-        // 12. INGREDIENTES DE PREPARO (PROPORCIONAIS NA TÁBUA)
+        // 12. INGREDIENTES DE PREPARO
         // ==========================================
         const ANCHORS = {
-            'bottom-pao': { x: 1.84, z: -0.58 + COUNTER_SHIFT_Z },
-            'fatia-queijo': { x: 2.05, z: -0.58 + COUNTER_SHIFT_Z },
-            'burger-top': { x: 2.26, z: -0.58 + COUNTER_SHIFT_Z }
+            'bottom-pao':   { x: 1.00, z: -0.58 + COUNTER_SHIFT_Z },
+            'fatia-queijo': { x: 1.24, z: -0.58 + COUNTER_SHIFT_Z },
+            'burger-top':   { x: 1.48, z: -0.58 + COUNTER_SHIFT_Z }
         };
 
         const interactiveItems = [];
@@ -2493,7 +2845,7 @@
             const anchor = ANCHORS[type];
             if (!anchor) return;
 
-            const targetY = window.boardTopY ? window.boardTopY + 0.002 : 0.9400;
+            const targetY = window.ingredientTraySurfaceY || 0.921;
             const mesh = getAsset(type);
             placeOnSurface(mesh, anchor.x, targetY, anchor.z);
             scene.add(mesh);
@@ -2609,7 +2961,7 @@
         });
 
         // ==========================================
-        // 13. INTERAÇÕES COM O MOUSE
+        // 13. INTERAÇÕES E CÂMERA POV NO DESKTOP
         // ==========================================
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
@@ -2638,7 +2990,40 @@
             return null;
         }
 
+        renderer.domElement.addEventListener('pointerdown', (e) => {
+            if (renderer.xr.isPresenting || e.button !== 0) return;
+
+            if (gameEngine && gameEngine.isPlaying) {
+                const item = getIntersectedItem(e);
+                if (item) {
+                    audioManager.init();
+
+                    if (item.type === 'carne-crua') {
+                        if (pattyController.state === 0) {
+                            pattyController.startCooking();
+                        }
+                        return;
+                    }
+
+                    if (pattyController.mesh === item.mesh && pattyController.state === 1) {
+                        return;
+                    }
+
+                    draggedItem = item;
+                    audioManager.playPop();
+                    return;
+                }
+            }
+
+            // Se não clicou em um ingrediente, inicia a rotação natural da cabeça (POV em primeira pessoa)
+            povLook.isLooking = true;
+            povLook.lastX = e.clientX;
+            povLook.lastY = e.clientY;
+        });
+
         window.addEventListener('pointermove', (e) => {
+            if (renderer.xr.isPresenting) return;
+
             if (draggedItem) {
                 mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
                 mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
@@ -2648,7 +3033,26 @@
                     draggedItem.mesh.position.copy(planeIntersect);
                     draggedItem.mesh.position.y = 0.97;
                 }
-            } else if (gameEngine && gameEngine.isPlaying) {
+                return;
+            }
+
+            if (povLook.isLooking) {
+                const deltaX = e.clientX - povLook.lastX;
+                const deltaY = e.clientY - povLook.lastY;
+                povLook.lastX = e.clientX;
+                povLook.lastY = e.clientY;
+
+                const sensitivity = 0.0032;
+                povLook.targetYaw -= deltaX * sensitivity;
+                povLook.targetPitch = THREE.MathUtils.clamp(
+                    povLook.targetPitch - deltaY * sensitivity,
+                    -Math.PI / 2.2,
+                    Math.PI / 2.2
+                );
+                return;
+            }
+
+            if (gameEngine && gameEngine.isPlaying) {
                 const item = getIntersectedItem(e);
                 if (item && (item.type !== 'carne-crua' || pattyController.state === 0)) {
                     if (hoveredMesh !== item.mesh) {
@@ -2662,34 +3066,11 @@
             }
         });
 
-        window.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0 || !gameEngine || !gameEngine.isPlaying) return;
-
-            const item = getIntersectedItem(e);
-            if (!item) return;
-
-            audioManager.init();
-
-            if (item.type === 'carne-crua') {
-                if (pattyController.state === 0) {
-                    pattyController.startCooking();
-                }
-                return;
-            }
-
-            if (pattyController.mesh === item.mesh && pattyController.state === 1) {
-                return;
-            }
-
-            draggedItem = item;
-            controls.enabled = false;
-            audioManager.playPop();
-        });
-
         window.addEventListener('pointerup', () => {
+            povLook.isLooking = false;
+
             if (!draggedItem) return;
 
-            controls.enabled = true;
             const item = draggedItem;
             draggedItem = null;
 
@@ -2724,7 +3105,7 @@
         }
 
         // ==========================================
-        // 14. CONTROLES E TELETRANSPORTE WEBXR
+        // 14. CONTROLES, MOVIMENTO E TELETRANSPORTE WEBXR
         // ==========================================
         function triggerHaptic(controller, intensity = 0.5, duration = 80) {
             const session = renderer.xr.getSession();
@@ -2738,6 +3119,60 @@
 
         const controllerModelFactory = new XRControllerModelFactory();
         const controllers = [];
+
+        function handleVRControllerGrabStart(controller) {
+            if (!gameEngine || !gameEngine.isPlaying) return;
+            audioManager.init();
+
+            tempXRMatrix.identity().extractRotation(controller.matrixWorld);
+            xrRaycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            xrRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempXRMatrix);
+
+            const meshes = interactiveItems.map(item => item.mesh);
+            const intersects = xrRaycaster.intersectObjects(meshes, true);
+
+            if (intersects.length > 0) {
+                let hitMesh = intersects[0].object;
+                while (hitMesh.parent && hitMesh.parent !== scene) hitMesh = hitMesh.parent;
+
+                const item = interactiveItems.find(i => i.mesh === hitMesh);
+                if (item) {
+                    triggerHaptic(controller, 0.4, 60);
+
+                    if (item.type === 'carne-crua' && pattyController.state === 0) {
+                        pattyController.startCooking();
+                        return true;
+                    }
+
+                    if (pattyController.mesh === item.mesh && pattyController.state === 1) {
+                        return true;
+                    }
+
+                    controller.userData.selectedItem = item;
+                    audioManager.playPop();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function handleVRControllerGrabEnd(controller) {
+            const item = controller.userData.selectedItem;
+            if (item) {
+                controller.userData.selectedItem = null;
+
+                const pos = item.mesh.position;
+                const plateDist = pos.distanceTo(PLATE_CENTER);
+                if (plateDist < 0.34) {
+                    const snapped = gameEngine.trySnapToPlate(item);
+                    if (snapped) return true;
+                }
+
+                vfxManager.addLerp(item.mesh, item.originalPos);
+                return true;
+            }
+            return false;
+        }
 
         for (let i = 0; i < 2; i++) {
             const controller = renderer.xr.getController(i);
@@ -2759,39 +3194,9 @@
             grip.add(controllerModelFactory.createControllerModel(grip));
             scene.add(grip);
 
+            // Gatilho principal (Trigger): pega objetos ou aponta teletransporte
             controller.addEventListener('selectstart', () => {
-                if (!gameEngine || !gameEngine.isPlaying) return;
-                audioManager.init();
-
-                tempXRMatrix.identity().extractRotation(controller.matrixWorld);
-                xrRaycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-                xrRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempXRMatrix);
-
-                const meshes = interactiveItems.map(item => item.mesh);
-                const intersects = xrRaycaster.intersectObjects(meshes, true);
-
-                if (intersects.length > 0) {
-                    let hitMesh = intersects[0].object;
-                    while (hitMesh.parent && hitMesh.parent !== scene) hitMesh = hitMesh.parent;
-
-                    const item = interactiveItems.find(i => i.mesh === hitMesh);
-                    if (item) {
-                        triggerHaptic(controller, 0.4, 60);
-
-                        if (item.type === 'carne-crua' && pattyController.state === 0) {
-                            pattyController.startCooking();
-                            return;
-                        }
-
-                        if (pattyController.mesh === item.mesh && pattyController.state === 1) {
-                            return;
-                        }
-
-                        controller.userData.selectedItem = item;
-                        audioManager.playPop();
-                        return;
-                    }
-                }
+                if (handleVRControllerGrabStart(controller)) return;
 
                 const targetFloor = teleportFloorMesh || window.teleportFloorMesh;
                 if (targetFloor) {
@@ -2803,40 +3208,32 @@
             });
 
             controller.addEventListener('selectend', () => {
-                const item = controller.userData.selectedItem;
-                if (item) {
-                    controller.userData.selectedItem = null;
-
-                    const pos = item.mesh.position;
-                    const plateDist = pos.distanceTo(PLATE_CENTER);
-                    if (plateDist < 0.34) {
-                        const snapped = gameEngine.trySnapToPlate(item);
-                        if (snapped) return;
-                    }
-
-                    vfxManager.addLerp(item.mesh, item.originalPos);
-                    return;
-                }
+                if (handleVRControllerGrabEnd(controller)) return;
 
                 if (controller.userData.teleportTarget) {
                     const targetPos = controller.userData.teleportTarget;
                     controller.userData.teleportTarget = null;
 
-                    const safeGroupX = THREE.MathUtils.clamp(
-                        targetPos.x - camera.position.x,
-                        ROOM_BOUNDS.minX - camera.position.x,
-                        ROOM_BOUNDS.maxX - camera.position.x
-                    );
-                    const safeGroupZ = THREE.MathUtils.clamp(
-                        targetPos.z - camera.position.z,
-                        ROOM_BOUNDS.minZ - camera.position.z,
-                        ROOM_BOUNDS.maxZ - camera.position.z
-                    );
+                    const headOffsetX = _camWorldPos.x - cameraGroup.position.x;
+                    const headOffsetZ = _camWorldPos.z - cameraGroup.position.z;
 
-                    cameraGroup.position.set(safeGroupX, 0, safeGroupZ);
+                    const desiredHeadX = targetPos.x;
+                    const desiredHeadZ = targetPos.z;
+                    const safeHeadPos = resolveCollision(desiredHeadX, desiredHeadZ);
+
+                    cameraGroup.position.set(safeHeadPos.x - headOffsetX, 0, safeHeadPos.z - headOffsetZ);
                     audioManager.playPop();
                     if (teleportReticle) teleportReticle.visible = false;
                 }
+            });
+
+            // Botão lateral (Grip / Squeeze): também permite agarrar ingredientes
+            controller.addEventListener('squeezestart', () => {
+                handleVRControllerGrabStart(controller);
+            });
+
+            controller.addEventListener('squeezeend', () => {
+                handleVRControllerGrabEnd(controller);
             });
 
             controllers.push(controller);
@@ -2963,119 +3360,197 @@
         });
 
         // ==========================================
-        // 16. LOOP PRINCIPAL E COLISÃO COM AS PAREDES
+        // 16. LOOP PRINCIPAL, LOCOMOÇÃO VR/DESKTOP E COLISÃO SUAVE
         // ==========================================
         const _camWorldPos = new THREE.Vector3();
+        const _forwardVec = new THREE.Vector3();
+        const _rightVec = new THREE.Vector3();
+        const _worldUp = new THREE.Vector3(0, 1, 0);
 
-        function enforceRoomBoundaries(isVR) {
+        let lastFrameTime = performance.now();
+        let snapTurnReady = true;
+
+        function resolveCollision(nextX, nextZ) {
+            let x = THREE.MathUtils.clamp(nextX, ROOM_BOUNDS.minX, ROOM_BOUNDS.maxX);
+            let z = THREE.MathUtils.clamp(nextZ, ROOM_BOUNDS.minZ, ROOM_BOUNDS.maxZ);
+
+            // Impede atravessar a geladeira, o fogão e a lixeira no canto esquerdo
+            if (x > -5.75 && x < -1.95 && z < BACK_WALL_Z + 0.92) {
+                z = BACK_WALL_Z + 0.92;
+            }
+
+            // Impede atravessar a estante na parede esquerda
+            if (x < LEFT_WALL_X + 0.85 && z > -2.35 && z < -0.95) {
+                x = LEFT_WALL_X + 0.85;
+            }
+
+            // Impede que o jogador entre dentro da bancada da cozinha
+            if (
+                x > COUNTER_COLLIDER.minX &&
+                x < COUNTER_COLLIDER.maxX &&
+                z > COUNTER_COLLIDER.minZ &&
+                z < COUNTER_COLLIDER.maxZ
+            ) {
+                const distFront = Math.abs(COUNTER_COLLIDER.maxZ - z);
+                const distLeft = Math.abs(x - COUNTER_COLLIDER.minX);
+                const distRight = Math.abs(COUNTER_COLLIDER.maxX - x);
+                const minDist = Math.min(distFront, distLeft, distRight);
+
+                if (minDist === distFront) {
+                    z = COUNTER_COLLIDER.maxZ;
+                } else if (minDist === distLeft) {
+                    x = COUNTER_COLLIDER.minX;
+                } else {
+                    x = COUNTER_COLLIDER.maxX;
+                }
+            }
+
+            return { x, z };
+        }
+
+        function movePlayerSafely(deltaX, deltaZ) {
+            if (deltaX === 0 && deltaZ === 0) return;
+
             camera.updateMatrixWorld(true);
             camera.getWorldPosition(_camWorldPos);
 
-            const clampedX = THREE.MathUtils.clamp(_camWorldPos.x, ROOM_BOUNDS.minX, ROOM_BOUNDS.maxX);
-            const clampedZ = THREE.MathUtils.clamp(_camWorldPos.z, ROOM_BOUNDS.minZ, ROOM_BOUNDS.maxZ);
+            const desiredX = _camWorldPos.x + deltaX;
+            const desiredZ = _camWorldPos.z + deltaZ;
+            const resolved = resolveCollision(desiredX, desiredZ);
 
-            const overflowX = _camWorldPos.x - clampedX;
-            const overflowZ = _camWorldPos.z - clampedZ;
+            cameraGroup.position.x += resolved.x - _camWorldPos.x;
+            cameraGroup.position.z += resolved.z - _camWorldPos.z;
+        }
 
-            if (isVR) {
-                if (overflowX !== 0) cameraGroup.position.x -= overflowX;
-                if (overflowZ !== 0) cameraGroup.position.z -= overflowZ;
-            } else {
-                controls.target.x = THREE.MathUtils.clamp(controls.target.x, ROOM_BOUNDS.minX, ROOM_BOUNDS.maxX);
-                controls.target.z = THREE.MathUtils.clamp(controls.target.z, ROOM_BOUNDS.minZ, ROOM_BOUNDS.maxZ);
-                controls.target.y = THREE.MathUtils.clamp(controls.target.y, ROOM_BOUNDS.minY, ROOM_BOUNDS.maxY);
-
-                const clampedY = THREE.MathUtils.clamp(_camWorldPos.y, ROOM_BOUNDS.minY, ROOM_BOUNDS.maxY);
-                const overflowY = _camWorldPos.y - clampedY;
-
-                if (overflowX !== 0) camera.position.x -= overflowX;
-                if (overflowY !== 0) camera.position.y -= overflowY;
-                if (overflowZ !== 0) camera.position.z -= overflowZ;
+        function readThumbstickAxes(gamepad) {
+            const axes = gamepad.axes || [];
+            // Padrão WebXR xr-standard usa axes[2] e axes[3]; controles legados usam [0] e [1]
+            if (axes.length >= 4 && (Math.abs(axes[2]) > 0.01 || Math.abs(axes[3]) > 0.01)) {
+                return { x: axes[2], y: axes[3] };
             }
+            return { x: axes[0] || 0, y: axes[1] || 0 };
         }
 
         renderer.setAnimationLoop((timestamp) => {
+            const dt = Math.min((timestamp - lastFrameTime) / 1000, 0.05);
+            lastFrameTime = timestamp;
+
             updateVRTeleportPointer();
             vfxManager.update();
 
             if (renderer.xr.isPresenting) {
                 const session = renderer.xr.getSession();
                 if (session) {
-                    for (const source of session.inputSources) {
-                        // Filtra exclusivamente o controle VR direito
-                        if (source && source.gamepad && source.handedness === 'right') {
-                            const axes = source.gamepad.axes;
+                    let moveForwardInput = 0;
+                    let moveStrafeInput = 0;
+                    let turnInput = 0;
 
-                            // Lê o analógico principal (axes[2]/[3] no padrão WebXR, com fallback para [0]/[1])
-                            const hasThumbstick = axes.length >= 4 && (Math.abs(axes[2]) > 0.05 || Math.abs(axes[3]) > 0.05);
-                            const moveX = hasThumbstick ? axes[2] : (axes[0] || 0);
-                            const moveY = hasThumbstick ? axes[3] : (axes[1] || 0);
+                    const inputSources = Array.from(session.inputSources).filter(s => s && s.gamepad);
 
-                            const deadzone = 0.12;
-                            if (Math.abs(moveX) > deadzone || Math.abs(moveY) > deadzone) {
-                                const speed = 0.04;
+                    inputSources.forEach((source, index) => {
+                        const stick = readThumbstickAxes(source.gamepad);
 
-                                // Direção para onde o capacete VR está olhando no plano horizontal
-                                const forward = new THREE.Vector3();
-                                camera.getWorldDirection(forward);
-                                forward.y = 0;
-                                forward.normalize();
-
-                                // Vetor perpendicular para a direita
-                                const right = new THREE.Vector3()
-                                    .crossVectors(forward, new THREE.Vector3(0, 1, 0))
-                                    .normalize();
-
-                                // No WebXR, empurrar o analógico para frente gera moveY negativo (-1)
-                                cameraGroup.position.addScaledVector(forward, -moveY * speed);
-                                cameraGroup.position.addScaledVector(right, moveX * speed);
-                            }
+                        if (source.handedness === 'left') {
+                            // Analógico Esquerdo: ir para frente, trás e para os lados
+                            moveStrafeInput += stick.x;
+                            moveForwardInput += -stick.y;
+                        } else if (source.handedness === 'right') {
+                            // Analógico Direito: girar a câmera (esquerda/direita) e também andar (frente/trás)
+                            turnInput += stick.x;
+                            moveForwardInput += -stick.y;
+                        } else if (inputSources.length === 1 && index === 0) {
+                            // Fallback caso apenas um controle genérico esteja conectado
+                            moveStrafeInput += stick.x;
+                            moveForwardInput += -stick.y;
                         }
+                    });
+
+                    const deadzone = 0.14;
+                    const vrMoveSpeed = 2.4 * dt;
+
+                    // Direção horizontal para onde o capacete VR está olhando
+                    camera.getWorldDirection(_forwardVec);
+                    _forwardVec.y = 0;
+                    if (_forwardVec.lengthSq() > 0.0001) {
+                        _forwardVec.normalize();
+                    } else {
+                        _forwardVec.set(0, 0, -1);
+                    }
+                    _rightVec.crossVectors(_forwardVec, _worldUp).normalize();
+
+                    let dx = 0;
+                    let dz = 0;
+
+                    if (Math.abs(moveForwardInput) > deadzone) {
+                        const clampedF = THREE.MathUtils.clamp(moveForwardInput, -1, 1);
+                        dx += _forwardVec.x * clampedF * vrMoveSpeed;
+                        dz += _forwardVec.z * clampedF * vrMoveSpeed;
+                    }
+
+                    if (Math.abs(moveStrafeInput) > deadzone) {
+                        const clampedS = THREE.MathUtils.clamp(moveStrafeInput, -1, 1);
+                        dx += _rightVec.x * clampedS * vrMoveSpeed;
+                        dz += _rightVec.z * clampedS * vrMoveSpeed;
+                    }
+
+                    movePlayerSafely(dx, dz);
+
+                    // Rotação rápida em ângulos (Snap Turn) no analógico direito
+                    if (Math.abs(turnInput) > 0.65) {
+                        if (snapTurnReady) {
+                            const angle = turnInput > 0 ? -Math.PI / 4 : Math.PI / 4;
+                            camera.updateMatrixWorld(true);
+                            camera.getWorldPosition(_camWorldPos);
+
+                            const offsetX = _camWorldPos.x - cameraGroup.position.x;
+                            const offsetZ = _camWorldPos.z - cameraGroup.position.z;
+
+                            cameraGroup.rotation.y += angle;
+
+                            const cosA = Math.cos(angle);
+                            const sinA = Math.sin(angle);
+                            const newOffsetX = offsetX * cosA + offsetZ * sinA;
+                            const newOffsetZ = -offsetX * sinA + offsetZ * cosA;
+
+                            cameraGroup.position.x = _camWorldPos.x - newOffsetX;
+                            cameraGroup.position.z = _camWorldPos.z - newOffsetZ;
+
+                            snapTurnReady = false;
+                        }
+                    } else if (Math.abs(turnInput) < 0.30) {
+                        snapTurnReady = true;
                     }
                 }
-
-                // Garante que o capacete VR nunca ultrapasse as paredes
-                enforceRoomBoundaries(true);
             } else {
-                const moveSpeed = 0.035;
-                const moveVector = new THREE.Vector3();
+                // Suavização da rotação do olhar POV no Desktop
+                povLook.yaw = THREE.MathUtils.lerp(povLook.yaw, povLook.targetYaw, 0.25);
+                povLook.pitch = THREE.MathUtils.lerp(povLook.pitch, povLook.targetPitch, 0.25);
+                cameraGroup.rotation.y = povLook.yaw;
+                camera.rotation.x = povLook.pitch;
 
-                const dir = new THREE.Vector3();
-                camera.getWorldDirection(dir);
-                dir.y = 0;
-                dir.normalize();
+                // Movimento em primeira pessoa no Desktop (WASD ou Setas)
+                const desktopSpeed = 2.6 * dt;
+                let forwardInput = 0;
+                let strafeInput = 0;
 
-                const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).negate();
+                if (keysPressed['w'] || keysPressed['arrowup']) forwardInput += 1;
+                if (keysPressed['s'] || keysPressed['arrowdown']) forwardInput -= 1;
+                if (keysPressed['d'] || keysPressed['arrowright']) strafeInput += 1;
+                if (keysPressed['a'] || keysPressed['arrowleft']) strafeInput -= 1;
 
-                if (keysPressed['w'] || keysPressed['arrowup']) moveVector.addScaledVector(dir, moveSpeed);
-                if (keysPressed['s'] || keysPressed['arrowdown']) moveVector.addScaledVector(dir, -moveSpeed);
-                if (keysPressed['a'] || keysPressed['arrowleft']) moveVector.addScaledVector(side, -moveSpeed);
-                if (keysPressed['d'] || keysPressed['arrowright']) moveVector.addScaledVector(side, moveSpeed);
+                if (forwardInput !== 0 || strafeInput !== 0) {
+                    camera.getWorldDirection(_forwardVec);
+                    _forwardVec.y = 0;
+                    _forwardVec.normalize();
+                    _rightVec.crossVectors(_forwardVec, _worldUp).normalize();
 
-                if (moveVector.lengthSq() > 0) {
-                    cameraGroup.position.add(moveVector);
-                    controls.target.add(moveVector);
+                    const moveDir = new THREE.Vector3()
+                        .addScaledVector(_forwardVec, forwardInput)
+                        .addScaledVector(_rightVec, strafeInput)
+                        .normalize();
 
-                    // Impede que o caminhar pelo teclado atravesse as paredes
-                    camera.updateMatrixWorld(true);
-                    camera.getWorldPosition(_camWorldPos);
-
-                    const clampedX = THREE.MathUtils.clamp(_camWorldPos.x, ROOM_BOUNDS.minX, ROOM_BOUNDS.maxX);
-                    const clampedZ = THREE.MathUtils.clamp(_camWorldPos.z, ROOM_BOUNDS.minZ, ROOM_BOUNDS.maxZ);
-
-                    const pushBackX = clampedX - _camWorldPos.x;
-                    const pushBackZ = clampedZ - _camWorldPos.z;
-
-                    if (pushBackX !== 0 || pushBackZ !== 0) {
-                        cameraGroup.position.x += pushBackX;
-                        cameraGroup.position.z += pushBackZ;
-                        controls.target.x += pushBackX;
-                        controls.target.z += pushBackZ;
-                    }
+                    movePlayerSafely(moveDir.x * desktopSpeed, moveDir.z * desktopSpeed);
                 }
-
-                controls.update();
-                enforceRoomBoundaries(false);
             }
 
             if (pattyController) {
